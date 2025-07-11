@@ -231,9 +231,10 @@ app.post('/api/crypto', async (req, res) => {
 
 
 app.post('/api/set_password', async (req, res) => {
-    if(password === ''){
+    if (password === '') {
         password = req.body.password
         writeFileSync(passwordPath, password, 'utf-8')
+        return res.send({ status: 'ok' })
     }
     res.status(400).send("already set")
 })

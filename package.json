@@ -29,11 +29,11 @@
     "@mlc-ai/web-llm": "^0.2.79",
     "@mlc-ai/web-tokenizers": "^0.1.2",
     "@risuai/ccardlib": "^0.4.1",
-    "@rollup/rollup-win32-arm64-msvc": "^4.40.1",
+
     "@smithy/protocol-http": "^3.0.12",
     "@smithy/signature-v4": "^2.0.19",
     "@tauri-apps/api": "2.5.0",
-    "@tauri-apps/cli-win32-arm64-msvc": "^2.5.0",
+
     "@tauri-apps/plugin-deep-link": "~2.2.1",
     "@tauri-apps/plugin-dialog": "~2.2.1",
     "@tauri-apps/plugin-fs": "~2.2.1",

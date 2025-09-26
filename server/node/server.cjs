@@ -236,7 +236,7 @@ app.post('/api/set_password', async (req, res) => {
         writeFileSync(passwordPath, password, 'utf-8')
         return res.send({ status: 'ok' })
     }
-    res.status(400).send("already set")
+    return res.status(400).send("already set")
 })
 
 app.get('/api/read', async (req, res, next) => {
@@ -258,7 +258,7 @@ app.get('/api/read', async (req, res, next) => {
 
     if(!isHex(filePath)){
         res.status(400).send({
-            error:'Invaild Path'
+            error:'Invalid Path'
         });
         return;
     }
@@ -292,7 +292,7 @@ app.get('/api/remove', async (req, res, next) => {
     }
     if(!isHex(filePath)){
         res.status(400).send({
-            error:'Invaild Path'
+            error:'Invalid Path'
         });
         return;
     }
@@ -346,7 +346,7 @@ app.post('/api/write', async (req, res, next) => {
     }
     if(!isHex(filePath)){
         res.status(400).send({
-            error:'Invaild Path'
+            error:'Invalid Path'
         });
         return;
     }

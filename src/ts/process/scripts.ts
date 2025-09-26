@@ -159,7 +159,7 @@ export async function processScriptFull(char:character|groupChat|simpleCharacter
                 flag = script.flag || 'g'
             }
             if(outScript.startsWith('@@move_top') || outScript.startsWith('@@move_bottom') || pscript.actions.includes('move_top') || pscript.actions.includes('move_bottom')){
-                flag = flag.replace('g', '') //temperary fix
+                flag = flag.replace('g', '') //temporary fix
             }
             if(outScript.endsWith('>') && !pscript.actions.includes('no_end_nl')){
                 outScript += '\n'

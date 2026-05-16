@@ -150,6 +150,61 @@ interface MCPToolCallResourceContent {
 type MCPToolCallContent = MCPToolCallTextContent | MCPToolCallImageAudioContent | MCPToolCallResourceContent;
 
 // ============================================================================
+// TTS Hook Types
+// ============================================================================
+
+/**
+ * Context passed to a TTS preprocessor hook. Preprocessors receive the text
+ * that is about to be spoken and may transform it before synthesis.
+ */
+interface BeforeTTSContext {
+    /** The text that will be sent to the TTS provider. */
+    text: string;
+    /** The provider the current character is configured to use (e.g. 'openai', 'gptsovits'). */
+    ttsMode: string;
+    /** The stable character id (character.chaId). Use risuai.getCharacter() if you need the full object. */
+    characterId: string;
+}
+
+/**
+ * Return value of a TTS preprocessor hook. Omit fields to leave them unchanged.
+ */
+interface BeforeTTSResult {
+    /** Replace the text that will be synthesized. */
+    text?: string;
+    /** If true, abort the entire TTS playback for this message (no subsequent hooks run, no audio is played). */
+    skip?: boolean;
+}
+
+/**
+ * Context passed to a TTS postprocessor hook. Postprocessors receive the raw
+ * encoded audio bytes returned by the provider, before they are decoded for
+ * playback. To access PCM, call `await new AudioContext().decodeAudioData(ctx.audio)`.
+ */
+interface AfterTTSContext {
+    /** Raw encoded audio as returned by the provider (mp3, wav, etc.). */
+    audio: ArrayBuffer;
+    /** MIME type of the audio (e.g. 'audio/mpeg', 'audio/wav'). Best-effort. */
+    mimeType: string;
+    /** The provider that produced this audio. */
+    ttsMode: string;
+    /** Stable character id. */
+    characterId: string;
+}
+
+/**
+ * Return value of a TTS postprocessor hook. Omit fields to leave them unchanged.
+ */
+interface AfterTTSResult {
+    /** Replace the audio bytes that will be played. If you change the codec, set mimeType too. */
+    audio?: ArrayBuffer;
+    /** Updated MIME type (if you changed the codec). */
+    mimeType?: string;
+    /** If true, skip playback entirely (hooks after this one are not called). */
+    skip?: boolean;
+}
+
+// ============================================================================
 // Core Types
 // ============================================================================
 
@@ -603,9 +658,9 @@ interface SafeElement {
 
     /**
      * Gets all child elements
-     * @returns Array of child SafeElements
+     * @returns SafeClassArray of child SafeElements
      */
-    getChildren(): Promise<SafeElement[]>;
+    getChildren(): Promise<SafeClassArray<SafeElement>>;
 
     /**
      * Gets the parent element
@@ -616,9 +671,9 @@ interface SafeElement {
     /**
      * Queries all descendant elements matching a selector
      * @param selector - CSS selector
-     * @returns Array of matching SafeElements
+     * @returns SafeClassArray of matching SafeElements
      */
-    querySelectorAll(selector: string): Promise<SafeElement[]>;
+    querySelectorAll(selector: string): Promise<SafeClassArray<SafeElement>>;
 
     /**
      * Queries the first descendant element matching a selector
@@ -637,9 +692,9 @@ interface SafeElement {
     /**
      * Gets elements by class name
      * @param className - Class name
-     * @returns Array of matching SafeElements
+     * @returns SafeClassArray of matching SafeElements
      */
-    getElementsByClassName(className: string): Promise<SafeElement[]>;
+    getElementsByClassName(className: string): Promise<SafeClassArray<SafeElement>>;
 
     /**
      * Checks if element matches a selector
@@ -1405,14 +1460,27 @@ interface RisuaiPluginAPI {
      */
     nativeFetch(url: string, options?: RequestInit): Promise<Response>;
 
+    /**
+     * Saves a secret header for network requests, for protected Headers (like Authorization) that are stripped by Risuai for security.
+     * To use saved secret headers, use an object `{ secretHeader: 'Header-Name' }` in the `headers` field of `nativeFetch` options,
+     * Like `{ headers: {"Authorization":{ secretHeader: 'Authorization' }} }`
+     * @m This API is work in progress and may have breaking changes in the future.
+     * @param key - Header key (e.g., 'Authorization')
+     * @param value - Header value.
+     */
+    saveSecretHeader(key: string, prefix: string, value: string|string[]): Promise<void>;
+
     // ========== UI Registration ==========
 
     /**
-     * Registers a settings menu item
+     * Registers a settings menu item.
+     * If `id` is provided and a setting with that ID already exists, it will be replaced in-place (preserving position).
+     *
      * @param name - Display name
      * @param callback - Callback function when clicked
      * @param icon - Icon content (HTML or image URL)
      * @param iconType - Icon type ('html', 'img', or 'none')
+     * @param id - Optional stable ID. If omitted, a UUID is generated. If provided and already registered, the existing entry is replaced in-place.
      *
      * @example
      * ```typescript
@@ -1423,7 +1491,8 @@ interface RisuaiPluginAPI {
      *     // Build settings UI...
      *   },
      *   '⚙️',
-     *   'html'
+     *   'html',
+     *   'my-plugin-settings'
      * );
      * ```
      */
@@ -1431,28 +1500,45 @@ interface RisuaiPluginAPI {
         name: string,
         callback: () => void | Promise<void>,
         icon?: string,
-        iconType?: IconType
+        iconType?: IconType,
+        id?: string
     ): Promise<UIPartResponse>;
 
 
     /**
-     * Registers a floating action button
-     * @param name - Display name
+     * Registers a floating action button.
+     * If `id` is provided and a button with that ID already exists, it will be replaced in-place (preserving position).
+     * When replacing, the button stays in its original location store regardless of the `location` parameter.
+     *
      * @param arg - Button configuration
+     * @param arg.name - Display name
      * @param arg.icon - Icon content (HTML or image URL)
      * @param arg.iconType - Icon type ('html', 'img', or 'none')
-     * @param arg.location - Button location ('action', 'chat', or 'hamburger')
+     * @param arg.location - Button location ('action', 'chat', or 'hamburger'). Ignored when replacing an existing button.
+     * @param arg.id - Optional stable ID. If omitted, a UUID is generated. If provided and already registered, the existing button is replaced in-place.
      * @param callback - Callback function when clicked
      *
      * @example
      * ```typescript
+     * // First registration
      * await risuai.registerButton({
      *   name: 'My Action',
      *   icon: '🔥',
      *   iconType: 'html',
-     *   location: 'action'
+     *   location: 'action',
+     *   id: 'my-plugin-action'
      * }, async () => {
      *     console.log('Action button clicked!');
+     * });
+     *
+     * // Later: replace in-place (position preserved)
+     * await risuai.registerButton({
+     *   name: 'Updated Action',
+     *   icon: '✨',
+     *   iconType: 'html',
+     *   id: 'my-plugin-action'
+     * }, async () => {
+     *     console.log('Updated!');
      * });
      * ```
      */
@@ -1460,7 +1546,8 @@ interface RisuaiPluginAPI {
         name: string,
         icon: string,
         iconType: 'html'|'img'|'none',
-        location?: 'action'|'chat'|'hamburger'
+        location?: 'action'|'chat'|'hamburger',
+        id?: string
     }, callback: () => void): Promise<UIPartResponse>;
 
     /**
@@ -1558,6 +1645,63 @@ interface RisuaiPluginAPI {
         name: string,
         func: ProviderFunction,
         options?: ProviderOptions
+    ): Promise<void>;
+
+    // ========== TTS Hooks ==========
+
+    /**
+     * Registers a preprocessor that runs before every TTS synthesis.
+     * The hook may transform the text or abort playback by returning `{ skip: true }`.
+     *
+     * Multiple preprocessors run sequentially in registration order — each hook
+     * receives the previous hook's output. If a hook throws, its result is
+     * discarded and the next hook runs.
+     *
+     * No timeout is enforced on hook execution (consistent with
+     * `addRisuScriptHandler` and `addRisuReplacer`), so a hook that hangs will
+     * stall TTS playback for that message. Plugins that call slow services
+     * (auxiliary LLMs, remote analysis) should implement their own
+     * `AbortController` + timer if cancellation is needed.
+     *
+     * Applies to all providers (including 'webspeech'). No permission prompt.
+     * Auto-unregistered when the plugin unloads.
+     *
+     * @example
+     * ```typescript
+     * await risuai.addTTSPreprocessor(async (ctx) => {
+     *   if (ctx.ttsMode !== 'openai') return;
+     *   return { text: ctx.text.replace(/\*(.*?)\*/g, '') };
+     * });
+     * ```
+     */
+    addTTSPreprocessor(
+        func: (ctx: BeforeTTSContext) => Promise<BeforeTTSResult | void> | BeforeTTSResult | void,
+    ): Promise<void>;
+
+    /**
+     * Registers a postprocessor that runs after synthesis, just before playback.
+     * The hook receives the raw encoded audio bytes and may return replacement
+     * audio (with optional new mimeType) or `{ skip: true }` to suppress playback.
+     *
+     * Sequential pipeline semantics identical to `addTTSPreprocessor`. No
+     * timeout is enforced on hook execution; plugins that perform long-running
+     * audio transforms should self-manage cancellation.
+     *
+     * Skipped for the 'webspeech' provider (browser-native synthesis does not
+     * produce an audio buffer) and the 'vits' provider (uses a separate playback
+     * path that does not flow through the shared helper).
+     *
+     * @example
+     * ```typescript
+     * await risuai.addTTSPostprocessor(async (ctx) => {
+     *   const audioBuffer = await new AudioContext().decodeAudioData(ctx.audio);
+     *   // ... analyse / normalize / re-encode ...
+     *   return { audio: normalizedBytes, mimeType: 'audio/wav' };
+     * });
+     * ```
+     */
+    addTTSPostprocessor(
+        func: (ctx: AfterTTSContext) => Promise<AfterTTSResult | void> | AfterTTSResult | void,
     ): Promise<void>;
 
     // ========== Script Handlers ==========
@@ -1779,6 +1923,36 @@ interface RisuaiPluginAPI {
      * @remarks This API is subject to change. API might be changed, deprecated, or removed in the future without prior notice.
      */
     postPluginChannelMessage(pluginName: string, channelName: string, message: any): Promise<void>;
+
+    // ========== Model Requesters ==========
+
+    /**
+     * Runs a request through a specified LLM model with given messages and options.
+     * @param options - Options for the LLM request
+     * @param options.messages - Array of chat messages to send to the model
+     * @param options.staticModel - Optional static model name to use (e.g., 'gpt-4')
+     * @param options.mode - Request mode
+     * @param options.allowPlugins - If true, allow the call to resolve to a
+     *   plugin-provided model (`pluginmodel:::*`). Default is false: plugin
+     *   models are blocked to guard against accidental IPC loops between
+     *   provider plugins. Opt in when the plugin legitimately needs to use
+     *   the user's plugin-supplied main or auxiliary model (e.g. a TTS
+     *   preprocessor rewriting text with the configured otherAx model).
+     *   Loop avoidance becomes the opting-in plugin's responsibility.
+     * @returns The model's response, which may be a string or a stream depending on the mode
+     */
+    runLLMModel(options: {
+        messages: any[];
+        staticModel?: string;
+        mode: string;
+        allowPlugins?: boolean;
+    }): Promise<any>;
+
+    /**
+     * Sends a chat message as if it were sent by the user, triggering the normal chat processing flow.
+     * @param message - The chat message to send, if string is a blank message, it will trigger the send action without adding a new message.
+     */
+    sendChat(message: string): Promise<void>;
 }
 
 // ============================================================================

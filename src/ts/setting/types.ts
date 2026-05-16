@@ -68,9 +68,10 @@ export interface SettingOptions {
     max?: number;
     step?: number;
     fixed?: number;         // Decimal places for slider
-    disableable?: boolean;  // Allow -1 to disable
-    customText?: string;    // Custom display text for slider
+    disableable?: boolean;  // Allow -1000 to disable
+    customText?: string | ((value: number) => string); // Custom display text for slider
     multiple?: number;      // Multiplier for display value
+    nullable?: boolean;     // Allow null for color inputs
     
     // select
     selectOptions?: SelectOption[];
@@ -81,6 +82,8 @@ export interface SettingOptions {
     // text, textarea
     placeholder?: string;
     hideText?: boolean;     // For password-like inputs
+    inputClassName?: string;
+    marginBottom?: boolean;
     
     // button
     onClick?: () => void | Promise<void>;
@@ -146,6 +149,9 @@ export interface SettingItem {
 
     /** Custom CSS classes for the main container or label */
     classes?: string;
+
+    /** Custom CSS classes for wrapper around label + input controls */
+    containerClasses?: string;
         
     /**
      * Component ID for custom components (type: 'custom')

@@ -459,6 +459,36 @@ export async function sendChat(chatProcessIndex = -1,arg:{
     }
 
     const lorepmt = await loadLoreBookV3Prompt()
+
+    const positionRegex = /{{position::(.+?)}}/g
+    const replaceposition = (text:string):{text:string, replaced:boolean} => {
+        let replaced = false
+        const result = text.replace(positionRegex, (match, p1) => {
+            replaced = true
+            const posMatch = 'pt_' + p1
+            const matchingPrompts: string[] = []
+            for (const v of lorepmt.actives) {
+                if (v.pos === posMatch) {
+                    matchingPrompts.push(v.prompt)
+                }
+            }
+            return matchingPrompts.join('\n')
+        })
+        return {text: result, replaced}
+    }
+
+    // maxDepth controls how many levels of nesting are resolved. Currently set to 5, adjust if needed.
+    const resolvePosition = (text:string, maxDepth:number = 5) => {
+        let result = text
+        for(let i=0; i<maxDepth;i++) {
+            const r = replaceposition(result)
+            result = r.text
+            if(!r.replaced) break
+        }
+        result = result.replace(positionRegex, '')
+        return result
+    }
+
     const normalActives = lorepmt.actives.filter(v => {
         return v.pos === '' && v.inject === null
     })
@@ -467,7 +497,7 @@ export async function sendChat(chatProcessIndex = -1,arg:{
     for(const lorebook of normalActives){
         unformated.lorebook.push({
             role: lorebook.role,
-            content: risuChatParser(lorebook.prompt, {chara: currentChar})
+            content: risuChatParser(resolvePosition(lorebook.prompt), {chara: currentChar})
         })
     }
 
@@ -478,7 +508,7 @@ export async function sendChat(chatProcessIndex = -1,arg:{
     for(const lorebook of descActives){
         const c = {
             role: lorebook.role,
-            content: risuChatParser(lorebook.prompt, {chara: currentChar})
+            content: risuChatParser(resolvePosition(lorebook.prompt), {chara: currentChar})
         }
         if(lorebook.pos === 'before_desc'){
             unformated.description.unshift(c)
@@ -516,7 +546,7 @@ export async function sendChat(chatProcessIndex = -1,arg:{
     for(const lorebook of postEverythingLorebooks){
         unformated.postEverything.push({
             role: lorebook.role,
-            content: risuChatParser(lorebook.prompt, {chara: currentChar})
+            content: risuChatParser(resolvePosition(lorebook.prompt), {chara: currentChar})
         })
     }
 
@@ -537,7 +567,7 @@ export async function sendChat(chatProcessIndex = -1,arg:{
     for(const lorebook of postEverythingAssistantLorebooks){
         unformated.postEverything.push({
             role: lorebook.role,
-            content: risuChatParser(lorebook.prompt, {chara: currentChar})
+            content: risuChatParser(resolvePosition(lorebook.prompt), {chara: currentChar})
         })
     }
 
@@ -548,7 +578,6 @@ export async function sendChat(chatProcessIndex = -1,arg:{
     //for unexpected error
     currentTokens += 50
     
-    const positionRegex = /{{position::(.+?)}}/g
     const positionParser = (text:string, loc:string) => {
         console.log(injectionLorePosSet)
         if(injectionLorePosSet.has(loc)){
@@ -572,15 +601,8 @@ export async function sendChat(chatProcessIndex = -1,arg:{
                 }
             }
         }
-        return text.replace(positionRegex, (match, p1) => {
-            const MatchingLorebooks = lorepmt.actives.filter(v => {
-                return v.pos === ('pt_' + p1)
-            })
 
-            return MatchingLorebooks.map(v => {
-                return v.prompt
-            }).join('\n')
-        })
+        return resolvePosition(text)
     }
 
     let hasCachePoint = false
@@ -751,7 +773,7 @@ export async function sendChat(chatProcessIndex = -1,arg:{
 
     let chats:OpenAIChat[] = examples
 
-    if(!DBState.db.aiModel.startsWith('novelai') || DBState.db?.promptSettings?.trimStartNewChat){
+    if(!DBState.db.aiModel.startsWith('novelai') && !DBState.db?.promptSettings?.trimStartNewChat){
         chats.push({
             role: 'system',
             content: '[Start a new chat]',
@@ -975,7 +997,7 @@ export async function sendChat(chatProcessIndex = -1,arg:{
     for(const depthPrompt of depthPrompts){
         const chat:OpenAIChat = {
             role: depthPrompt.role,
-            content: risuChatParser(depthPrompt.prompt, {chara: currentChar})
+            content: risuChatParser(resolvePosition(depthPrompt.prompt), {chara: currentChar})
         }
         currentTokens += await tokenizer.tokenizeChat(chat)
     }
@@ -1103,7 +1125,7 @@ export async function sendChat(chatProcessIndex = -1,arg:{
     for(const depthPrompt of depthPrompts){
         const chat:OpenAIChat = {
             role: depthPrompt.role,
-            content: risuChatParser(depthPrompt.prompt, {chara: currentChar})
+            content: risuChatParser(resolvePosition(depthPrompt.prompt), {chara: currentChar})
         }
         const depth = depthPrompt.pos === 'depth' ? (depthPrompt.depth) : (unformated.chats.length - depthPrompt.depth)
         unformated.chats.splice(depth,0,chat)
@@ -1526,29 +1548,56 @@ export async function sendChat(chatProcessIndex = -1,arg:{
             })
         }
         DBState.db.characters[selectedChar].chats[selectedChat].isStreaming = true
+        DBState.db.characters[selectedChar].reloadKeys += 1
         let lastResponseChunk:{[key:string]:string} = {}
-        while(abortSignal.aborted === false){
-            const readed = (await reader.read())
-            if(readed.value){
-                lastResponseChunk = readed.value
-                const firstChunkKey = Object.keys(lastResponseChunk)[0]
-                result = lastResponseChunk[firstChunkKey]
-                if(!result){
-                    result = ''
+        let streamAborted:boolean = abortSignal.aborted
+        const abortReader = () => {
+            streamAborted = true
+            void reader.cancel().catch(() => {})
+        }
+        abortSignal.addEventListener('abort', abortReader, { once: true })
+        try {
+            while(streamAborted === false){
+                let readed: ReadableStreamReadResult<{ [key: string]: string }>
+                try {
+                    readed = await reader.read()
                 }
-                if(DBState.db.removeIncompleteResponse){
-                    result = trimUntilPunctuation(result)
+                catch(error){
+                    if(abortSignal.aborted || streamAborted){
+                        streamAborted = true
+                        break
+                    }
+                    throw error
                 }
-                let result2 = await processScriptFull(nowChatroom, reformatContent(prefix + result), 'editoutput', msgIndex)
-                DBState.db.characters[selectedChar].chats[selectedChat].message[msgIndex].data = result2.data
-                emoChanged = result2.emoChanged
-                DBState.db.characters[selectedChar].reloadKeys += 1
+                if(readed.value){
+                    lastResponseChunk = readed.value
+                    const firstChunkKey = Object.keys(lastResponseChunk)[0]
+                    result = lastResponseChunk[firstChunkKey]
+                    if(!result){
+                        result = ''
+                    }
+                    if(DBState.db.removeIncompleteResponse){
+                        result = trimUntilPunctuation(result)
+                    }
+                    let result2 = await processScriptFull(nowChatroom, reformatContent(prefix + result), 'editoutput', msgIndex)
+                    DBState.db.characters[selectedChar].chats[selectedChat].message[msgIndex].data = result2.data
+                    emoChanged = result2.emoChanged
+                    DBState.db.characters[selectedChar].reloadKeys += 1
+                }
+                if(readed.done){
+                    break
+                }
             }
-            if(readed.done){
-                DBState.db.characters[selectedChar].chats[selectedChat].isStreaming = false
-                DBState.db.characters[selectedChar].reloadKeys += 1
-                break
-            }   
+        }
+        finally {
+            abortSignal.removeEventListener('abort', abortReader)
+            DBState.db.characters[selectedChar].chats[selectedChat].isStreaming = false
+            DBState.db.characters[selectedChar].reloadKeys += 1
+            void reader.cancel().catch(() => {})
+        }
+
+        if(streamAborted || abortSignal.aborted){
+            return false
         }
 
         addRerolls(generationId, Object.values(lastResponseChunk))

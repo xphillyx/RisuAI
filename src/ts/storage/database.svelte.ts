@@ -22,8 +22,8 @@ import {
 } from '../chatLoadPages';
 
 //APP_VERSION_POINT is to locate the app version in the database file for version bumping
-export let appVer = "2026.8.160" //<APP_VERSION_POINT>
-export let appSubVer = 'preview'
+export let appVer = "2026.8.250" //<APP_VERSION_POINT>
+export let appSubVer = ''
 
 export type StreamingDisplayOptimizationMode = 'off'|'balanced'|'strong'
 
@@ -770,7 +770,7 @@ export function setCharacterByIndex(index:number,char:character|groupChat){
 
 export function getCurrentChat(){
     const char = getCurrentCharacter()
-    return char?.chats[char.chatPage]
+    return char?.chats?.[char.chatPage]
 }
 
 export function setCurrentChat(chat:Chat){
@@ -1836,6 +1836,8 @@ export interface Chat{
     lastDate?:number
     bookmarks?: string[];
     bookmarkNames?: { [chatId: string]: string };
+    useLocallySetGlobalVariables?: boolean
+    GLGlobalVariables?: { [key: string]: string }
 }
 
 export interface ChatFolder{
